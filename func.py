@@ -755,7 +755,7 @@ def update_stockquote(code, df_history, df_today):
             df_today['date'] = now_date
         df_today.set_index('date', drop=False, inplace=True)
         df_today = df_today.rename(columns={'price': 'close'})
-        df_today = df_today[{'code', 'date', 'open', 'high', 'low', 'close', 'vol', 'amount'}]
+        df_today = df_today[['code', 'date', 'open', 'high', 'low', 'close', 'vol', 'amount']]
         result = pd.concat([df_history, df_today], axis=0, ignore_index=False)
         result = result.fillna(method='ffill')  # 向下填充无效值
         if '流通市值' and '换手率' in result.columns.tolist():

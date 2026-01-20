@@ -1,6 +1,6 @@
 """
-此为策略模板文件。你自己写策略后，一定要保存为celue.py
-celue.py文件不直接执行，通过xuangu.py或celue_save.py调用
+连续涨5天选股策略
+基于CeLue模板.py修改，实现连续涨5天的选股逻辑
 
 个人实际策略不分享。
 
@@ -13,6 +13,7 @@ import numpy as np
 import talib
 import time
 import func
+import pandas as pd
 from func_TDX import rolling_window, REF, MA, SMA, HHV, LLV, COUNT, EXIST, CROSS, BARSLAST
 from rich import print
 
@@ -37,7 +38,8 @@ def 策略HS300(df_hs300, start_date='', end_date=''):
 
 def 策略1(df, start_date='', end_date='', mode=None):
     """
-
+    连续涨5天策略的基础筛选条件
+    
     :param DataFrame df:输入具体一个股票的DataFrame数据表。时间列为索引。
     :param mode :str 'fast'为快速模式，只处理当日数据，用于开盘快速筛选股票。和策略2结合使用时不能用fast模式
     :param date start_date:可选。留空从头开始。2020-10-10格式，策略指定从某日期开始
@@ -60,55 +62,40 @@ def 策略1(df, start_date='', end_date='', mode=None):
         换手率 = 0
 
     if mode == 'fast':
-        # 天数不足500天，收盘价小于9直接返回FALSE
-
-        # TJ01
-        # now_date = pd.to_datetime(time.strftime("%Y-%m-%d", time.localtime()))
-        # if df.at[df.index[-1], 'date'] < now_date:
-        #     print(f"{df.at[df.index[-1], 'code']} 无今日数据 跳过")
-        #     return False
-        # del now_date
-        if C.shape[0] < 500 or C.iat[-1] < 9:
+        # 天数不足10天，收盘价小于3直接返回FALSE
+        if C.shape[0] < 10 or C.iat[-1] < 3:
             return False
 
-        金额万均 = MA(df['amount'] / 10000, 30)
-        流通市值亿 = df['流通市值'] / 100000000
+        # 基础条件：股价大于3元，有足够的交易数据
+        基础条件 = C.iat[-1] > 3
 
-        MA5 = MA(C, 5)
-
-        # TJ04
-        # {排除当日涨停的股票}
+        # 排除涨停股票
         if df['code'][0][0:2] == "68" or df['code'][0][0:2] == "30":
-            TJ04_1 = 1.2
+            涨停价 = 1.2
         else:
-            TJ04_1 = 1.1
-        TJ04_2 = ~((C+0.01) >= np.ceil((np.floor(REF(C, 1)*1000*TJ04_1)-4)/10)/100)
-        TJ04 = TJ04_2.iat[-1]
+            涨停价 = 1.1
+        非涨停 = ~((C.iat[-1]+0.01) >= np.ceil((np.floor(REF(C, 1).iat[-1]*1000*涨停价)-4)/10)/100)
 
-        result = TJ04
+        result = 基础条件 & 非涨停
     else:
-        金额万均 = SMA(df['amount'] / 10000, 30)
-        流通市值亿 = df['流通市值'] / 100000000
-        MA5 = SMA(C, 5)
+        # 基础条件：股价大于3元，有足够的交易数据
+        基础条件 = (C > 3) & (BARSLAST(C == 0) > 10)
 
-        # TJ01
-        TJ01 = (BARSLAST(C == 0) > 500) & (df['close'] > 9)
-
-        # TJ04
+        # 排除涨停股票
         if df['code'][0][0:2] == "68" or df['code'][0][0:2] == "30":
-            TJ04_1 = 1.2
+            涨停价 = 1.2
         else:
-            TJ04_1 = 1.1
-        TJ04_2 = ~((C+0.01) >= np.ceil((np.floor(REF(C, 1)*1000*TJ04_1)-4)/10)/100)
-        TJ04 = TJ04_2
+            涨停价 = 1.1
+        非涨停 = ~((C+0.01) >= np.ceil((np.floor(REF(C, 1)*1000*涨停价)-4)/10)/100)
 
-        result = TJ01 & TJ04
+        result = 基础条件 & 非涨停
     return result
 
 
 def 策略2(df, HS300_信号, start_date='', end_date=''):
     """
-
+    连续涨5天选股策略主逻辑
+    
     :param DataFrame df:输入具体一个股票的DataFrame数据表。时间列为索引。
     :param date start_date:可选。留空从头开始。2020-10-10格式，策略指定从某日期开始
     :param date end_date:可选。留空到末尾。2020-10-10格式，策略指定到某日期结束
@@ -121,8 +108,8 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
         end_date = df.index[-1]  # 设置为df最后一个日期
     df = df.loc[start_date:end_date]
 
-    if df.shape[0] < 251:  # 小于250日 直接返回flase序列
-        return pd.Series(index=df.index, dtype=bool)
+    if df.shape[0] < 10:  # 小于10日 直接返回false序列
+        return pd.Series([False] * len(df), index=df.index, dtype=bool)
 
     # 根据df的索引重建HS300信号，为了与股票交易日期一致
     HS300_信号 = pd.Series(HS300_信号, index=df.index, dtype=bool).dropna()
@@ -131,72 +118,48 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
     H = df['high']
     L = df['low']
     C = df['close']
-    换手率 = df['换手率']
 
-    # 变量定义
-    MA5 = SMA(C, 5)
-    MA10 = SMA(C, 10)
-    MA20 = SMA(C, 20)
-    MA60 = SMA(C, 60)
-    MA120 = SMA(C, 120)
-    MA250 = SMA(C, 250)
+    # 计算每日涨跌幅
+    当日涨幅 = (C / REF(C, 1) - 1) * 100
 
-    流通市值亿 = df['流通市值'] / 100000000
+    # 连续涨5天的核心逻辑
+    # 今日上涨
+    今日上涨 = 当日涨幅 > 0
+    
+    # 连续5天都上涨
+    连续5天上涨 = (今日上涨 & 
+                  (REF(当日涨幅, 1) > 0) & 
+                  (REF(当日涨幅, 2) > 0) & 
+                  (REF(当日涨幅, 3) > 0) & 
+                  (REF(当日涨幅, 4) > 0))
 
-    # 判断部分
-    # 每个TJ0?返回的都是bool序列
+    # 基础策略1的条件
+    策略1条件 = 策略1(df, start_date, end_date)
 
-    # TJ01
-    TJ01 = (MA120 > -5) & (MA10 < 60) & (MA60 < 10) & (-7 < MA250) & (MA250 < 10)
+    # 成交量条件：避免无量上涨
+    if 'amount' in df.columns:
+        成交额均值 = SMA(df['amount'], 5)
+        成交量条件 = df['amount'] > 成交额均值 * 0.8
+    else:
+        成交量条件 = pd.Series([True] * len(df), index=df.index, dtype=bool)
 
-    # TJ02
-    TJ02 = (C > SMA(C, 60)) & (C < SMA(C, 60) * 1.1) & (C > O)
+    # 涨幅控制：单日涨幅不超过9%，避免异常波动
+    涨幅合理 = 当日涨幅 < 9
 
-    # TJ06
-    # {20日/200日涨幅小于50%，且收盘价到上穿MA60日的涨幅 除以上穿MA60日到30日收盘最低价 的比 小于1.5倍 }
-    TJ06_1 = LLV(C, 200)
-    TJ06_2 = LLV(C, 20)
-    TJ06_MA60_DAY = BARSLAST((REF(C, 5) < MA60) & CROSS(C, MA60))
-    # TJ06_MA60 = REF(MA60, TJ06_MA60_DAY)
-    # TJ06_MA60特殊，只能单独写出来
-    TJ06_MA60 = pd.Series(index=TJ06_MA60_DAY.index, dtype=float)  # 新建序列，传递索引
+    # 综合条件
+    买入信号 = (HS300_信号 & 
+              策略1条件 & 
+              连续5天上涨 & 
+              成交量条件 & 
+              涨幅合理)
 
-    i = 0
-    for k, v in TJ06_MA60_DAY.items():
-        if i - v > 0:
-            TJ06_MA60.iat[i] = MA60.iat[i - v]
-        i = i + 1
-
-    df = pd.concat([df, TJ06_MA60_DAY.rename('TJ06_MA60_DAY')], axis=1)
-    df.insert(df.shape[1], 'TJ06_MA60_LLV', np.NaN)
-    for index_date in df.loc[df['TJ06_MA60_DAY'] == 0].index.to_list():
-        index_int = df.index.get_loc(index_date)
-        df.at[index_date, 'TJ06_MA60_LLV'] = df.iloc[index_int - 20:index_int]['close'].min()
-    df = df.fillna(method='ffill')  # 向下填充无效值
-    TJ06_MA60_LLV = df['TJ06_MA60_LLV']
-
-    TJ06_3 = TJ06_MA60 / TJ06_MA60_LLV
-    TJ06_4 = C / TJ06_MA60
-    TJ06 = (TJ06_2 / TJ06_1 - 1 < 0.5) & (1 < TJ06_3 / TJ06_4) & (TJ06_3 / TJ06_4 < 1.5)
-
-    # TJ11
-    TJP1 = 策略1(df, start_date, end_date)
-    TJ11_1 = HS300_信号 & TJP1 & TJ01 & TJ02 & TJ06
-    TJ11_2 = COUNT(TJ11_1, 10)
-    TJ11 = TJ11_1 & (REF(TJ11_2, 1) == 0)
-
-    # TJ99
-    TJ99 = TJ11
-
-    # {输出部分}
-    BUYSIGN = TJ99
-
-    return BUYSIGN
+    return 买入信号
 
 
 def 卖策略(df, 策略2, start_date='', end_date=''):
     """
-
+    连续涨5天策略的卖出逻辑
+    
     :param df: 个股Dataframe
     :param 策略2: 买入策略2
     :param start_date:
@@ -205,7 +168,7 @@ def 卖策略(df, 策略2, start_date='', end_date=''):
     """
 
     if True not in 策略2.to_list():  # 买入策略2 没有买入点
-        return pd.Series(index=策略2.index, dtype=bool)
+        return pd.Series([False] * len(策略2), index=策略2.index, dtype=bool)
 
     if start_date == '':
         start_date = df.index[0]  # 设置为df第一个日期
@@ -217,55 +180,50 @@ def 卖策略(df, 策略2, start_date='', end_date=''):
     H = df['high']
     L = df['low']
     C = df['close']
-    流通市值亿 = df['流通市值'] / 100000000
 
-    # 变量定义
-    MA10 = SMA(C, 10)
-    MA60 = SMA(C, 60)
-
+    # 计算买入后的天数和价格
     BUY_TODAY = BARSLAST(策略2)
     BUY_PRICE_CLOSE = pd.Series(index=C.index, dtype=float)
-    BUY_PRICE_OPEN = pd.Series(index=C.index, dtype=float)
     BUY_PCT = pd.Series(index=C.index, dtype=float)
-    BUY_PCT_MAX = pd.Series(index=C.index, dtype=float)
-    # C序列选择BUY_TODAY==0（当日为买入日）的索引的值列表，再倒序循环
+    
+    # 计算买入价格和收益率
     for i in BUY_TODAY[BUY_TODAY == 0].index.to_list()[::-1]:
         BUY_PRICE_CLOSE.loc[i] = C.loc[i]
-        BUY_PRICE_OPEN.loc[i] = O.loc[i]
         BUY_PRICE_CLOSE.fillna(method='ffill', inplace=True)  # 向下填充无效值
-        BUY_PRICE_OPEN.fillna(method='ffill', inplace=True)  # 向下填充无效值
         BUY_PCT = C / BUY_PRICE_CLOSE - 1
-        # 循环计算BUY_PCT_MAX
-        for k, v in BUY_PCT[i:].items():
-            if np.isnan(BUY_PCT_MAX[k]):
-                BUY_PCT_MAX[k] = BUY_PCT[i:k].max()
 
-    # SELL01
-    # {买入后，跌破MA60且跌破买入日的开盘价}
-    SELL01 = (C < MA60) & (C < BUY_PRICE_OPEN)
+    # 计算当日涨跌幅
+    当日涨幅 = (C / REF(C, 1) - 1) * 100
 
-    # SELL02
-    # {最高点小于前低点，表示有向下跳空缺口}
-    SELL02 = (BUY_PCT < 0.1) & (H < REF(L, 1))
+    # 卖出条件1：连续下跌2天
+    连续下跌2天 = (当日涨幅 < 0) & (REF(当日涨幅, 1) < 0)
 
-    # SELL03
-    # {买入N天后，涨幅大于0%，小于3%（N=流通市值亿)，当日收盘卖出}
-    SELL03_1 = pd.Series(index=C.index, dtype=float)
-    SELL03_1 = 流通市值亿.apply(lambda x: 7 if x < 100 else 14)
-    SELL03 = (BUY_TODAY > SELL03_1) & (0.01 < C / BUY_PCT) & (C / BUY_PCT < 0.03)
+    # 卖出条件2：单日跌幅超过5%
+    单日大跌 = 当日涨幅 < -5
 
-    # SELLSIGN
-    SELLSIGN01 = SELL01 | SELL02 | SELL03
-    SELLSIGN = pd.Series(index=C.index, dtype=bool)
-    # 循环，第一次出现SELLSIGN01=True时，SELLSIGN[k] = True并结束循环。可以获得和通达信公式AUTOFILTER相同效果
+    # 卖出条件3：买入后持有超过10天且收益率小于2%
+    持有过久收益低 = (BUY_TODAY > 10) & (BUY_PCT < 0.02)
+
+    # 卖出条件4：收益率达到15%止盈
+    止盈 = BUY_PCT > 0.15
+
+    # 卖出条件5：亏损超过8%止损
+    止损 = BUY_PCT < -0.08
+
+    # 综合卖出信号
+    卖出信号初步 = 连续下跌2天 | 单日大跌 | 持有过久收益低 | 止盈 | 止损
+    
+    卖出信号 = pd.Series([False] * len(C), index=C.index, dtype=bool)
+    
+    # 循环，第一次出现卖出信号时执行卖出
     for i in BUY_TODAY[BUY_TODAY == 0].index.to_list()[::-1]:
-        for k, v in SELLSIGN01[i:].items():
+        for k, v in 卖出信号初步[i:].items():
             # k != i 排除买入信号当日同时产生卖出信号的极端情况
-            if k != i and SELLSIGN01[k]:
-                SELLSIGN[k] = True
+            if k != i and 卖出信号初步[k]:
+                卖出信号[k] = True
                 break
 
-    return SELLSIGN
+    return 卖出信号
 
 
 if __name__ == '__main__':
@@ -274,7 +232,7 @@ if __name__ == '__main__':
     import os
     import user_config as ucfg
 
-    stock_code = '000887'
+    stock_code = '000001'
     start_date = ''
     end_date = ''
     df_stock = pd.read_csv(ucfg.tdx['csv_lday'] + os.sep + stock_code + '.csv',
