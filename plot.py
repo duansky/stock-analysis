@@ -89,7 +89,7 @@ def marklinedata(df_stock):
     TJ04_低突破 = BARSLASTCOUNT(H < TJ04_均线) == 9
     TJ04_高突破 = pd.DataFrame(TJ04_高突破.loc[TJ04_高突破 == True], columns=["高突破"])
     TJ04_低突破 = pd.DataFrame(TJ04_低突破.loc[TJ04_低突破 == True], columns=["低突破"])
-    TJ04_过滤 = pd.concat([TJ04_高突破, TJ04_低突破]).fillna(value=False).sort_index()
+    TJ04_过滤 = pd.concat([TJ04_高突破, TJ04_低突破]).fillna(value=False).infer_objects(copy=False).sort_index()
     del TJ04_均线, TJ04_高突破, TJ04_低突破
     高, 低 = 0, 0
     # 过滤高低突破信号循环逻辑：日期由远及近，高低突破信号依次取值，保留各自最相近的一个
@@ -135,7 +135,7 @@ def marklinedata(df_stock):
                                       },
                                 name=index,
                                 )
-        TJ04_高低点 = TJ04_高低点.append(df_temp)
+        TJ04_高低点 = pd.concat([TJ04_高低点, df_temp.to_frame().T], ignore_index=True)
     TJ04_高低点.reset_index(drop=True, inplace=True)
 
     # 转换为pyecharts所需数据格式
