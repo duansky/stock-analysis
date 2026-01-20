@@ -54,7 +54,7 @@ def 策略1(df, start_date='', end_date='', mode=None):
     L = df['low']
     C = df['close']
     V = df['vol']
-
+    
     if {'换手率'}.issubset(df.columns):  # 无换手率列的股票，只可能是近几个月的新股。
         换手率 = df['换手率']
     else:
@@ -71,7 +71,7 @@ def 策略1(df, start_date='', end_date='', mode=None):
         else:
             涨停价 = 1.1
         非涨停 = ~((C+0.01) >= np.ceil((np.floor(REF(C, 1)*1000*涨停价)-4)/10)/100)
-
+        
         result = 非涨停.iat[-1]
     else:
         # TJ01: 基础条件
@@ -94,7 +94,7 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
     1. 最近15日有涨幅大于9.5%，且必须是放量上涨
     2. 紧接的下个交易日必须高开，收盘价必须上涨，且与开盘价不能大于等于相差3%
     3. 接下2、3个交易日必须高开，收盘价必须上涨，且与开盘价不能大于等于相差3%，且每天涨跌幅在5%间
-
+    
     :param DataFrame df:输入具体一个股票的DataFrame数据表。时间列为索引。
     :param HS300_信号: HS300信号序列
     :param date start_date:可选。留空从头开始。2020-10-10格式，策略指定从某日期开始
@@ -119,7 +119,7 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
     L = df['low']
     C = df['close']
     V = df['vol']
-
+    
     if {'换手率'}.issubset(df.columns):
         换手率 = df['换手率']
     else:
@@ -127,22 +127,22 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
 
     # 计算涨跌幅
     涨跌幅 = (C / REF(C, 1) - 1) * 100
-
+    
     # 计算成交量均线
     成交量均线20 = SMA(V, 20)
-
+    
     # 条件1：最近15日有涨幅大于9.5%，且必须是放量上涨
     # 使用HHV函数计算15日内最高收盘价
     最近15日最高价 = HHV(C, 15)
     最近15日最低价 = LLV(C, 15)
     最近15日最大涨幅 = (最近15日最高价 / 最近15日最低价 - 1) * 100
-
+    
     # 检查15日内是否有放量上涨（成交量大于20日均线且当日上涨）
     放量上涨日 = (V > 成交量均线20) & (涨跌幅 > 0)
     最近15日有放量上涨 = COUNT(放量上涨日, 15) > 0
-
+    
     TJ01 = (最近15日最大涨幅 > 9.5) & 最近15日有放量上涨
-
+    
     # 条件2：紧接的下个交易日必须高开，收盘价必须上涨，且与开盘价不能大于等于相差3%
     # 高开：今日开盘价 > 昨日收盘价
     高开 = O > REF(C, 1)
@@ -150,13 +150,13 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
     收盘上涨 = C > O
     # 开收盘价差小于3%
     开收盘价差 = abs((C - O) / O * 100)
-
+    
     TJ02 = 高开 & 收盘上涨 & (开收盘价差 < 3)
-
+    
     # 条件3：接下来的2、3个交易日条件检查
     # 由于无法预知未来，这里检查历史数据中满足前两个条件后的后续表现
     TJ03 = pd.Series(index=df.index, dtype=bool, data=False)
-
+    
     # 遍历每个可能的买入点，检查后续2个交易日是否满足条件
     for i in range(len(df) - 3):
         if i >= 15:  # 确保有足够的历史数据计算15日条件
@@ -174,29 +174,29 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
                         next_开收盘价差 = abs((C.iloc[i + j] - O.iloc[i + j]) / O.iloc[i + j] * 100)
                         # 下一日涨跌幅在5%以内
                         next_涨跌幅 = abs(涨跌幅.iloc[i + j])
-
-                        day_condition = (next_高开 and next_收盘上涨 and
+                        
+                        day_condition = (next_高开 and next_收盘上涨 and 
                                        next_开收盘价差 < 3 and next_涨跌幅 < 5)
-
+                        
                         if not day_condition:
                             next_days_ok = False
                             break
                     else:
                         next_days_ok = False
                         break
-
+                
                 if next_days_ok:
                     TJ03.iloc[i] = True
-
+    
     # 策略1基础条件
     TJP1 = 策略1(df, start_date, end_date)
-
+    
     # 综合判断：当前满足条件1和2，且历史数据显示这种模式后续表现良好
     当前停机坪信号 = TJ01 & TJ02
-
+    
     # 最终信号：结合HS300信号、基础条件和停机坪信号
     停机坪信号 = HS300_信号 & TJP1 & 当前停机坪信号
-
+    
     # 避免重复信号：10日内只出现一次信号
     停机坪信号_计数 = COUNT(停机坪信号, 10)
     最终信号 = 停机坪信号 & (REF(停机坪信号_计数, 1) == 0)
@@ -226,17 +226,17 @@ def 卖策略(df, 策略2, start_date='', end_date=''):
     H = df['high']
     L = df['low']
     C = df['close']
-
+    
     # 变量定义
     MA10 = SMA(C, 10)
     MA20 = SMA(C, 20)
-
+    
     BUY_TODAY = BARSLAST(策略2)
     BUY_PRICE_CLOSE = pd.Series(index=C.index, dtype=float)
     BUY_PRICE_OPEN = pd.Series(index=C.index, dtype=float)
     BUY_PCT = pd.Series(index=C.index, dtype=float)
     BUY_PCT_MAX = pd.Series(index=C.index, dtype=float)
-
+    
     # 计算买入价格和收益率
     for i in BUY_TODAY[BUY_TODAY == 0].index.to_list()[::-1]:
         BUY_PRICE_CLOSE.loc[i] = C.loc[i]
@@ -268,7 +268,7 @@ def 卖策略(df, 策略2, start_date='', end_date=''):
     # 综合卖出信号
     SELLSIGN01 = SELL01 | SELL02 | SELL03 | SELL04 | SELL05
     SELLSIGN = pd.Series(index=C.index, dtype=bool)
-
+    
     # 循环，第一次出现SELLSIGN01=True时，SELLSIGN[k] = True并结束循环
     for i in BUY_TODAY[BUY_TODAY == 0].index.to_list()[::-1]:
         for k, v in SELLSIGN01[i:].items():
@@ -297,7 +297,7 @@ if __name__ == '__main__':
     df_hs300 = pd.read_csv(ucfg.tdx['csv_index'] + '/000300.csv', index_col=None, encoding='gbk', dtype={'code': str})
     df_hs300['date'] = pd.to_datetime(df_hs300['date'], format='%Y-%m-%d')  # 转为时间格式
     df_hs300.set_index('date', drop=False, inplace=True)  # 时间为索引。方便与另外复权的DF表对齐合并
-
+    
     if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00':
         df_today = func.get_tdx_lastestquote((1, '000300'))
         df_hs300 = func.update_stockquote('000300', df_hs300, df_today)
@@ -309,14 +309,14 @@ if __name__ == '__main__':
     if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00':
         df_today = func.get_tdx_lastestquote(stock_code)
         df_stock = func.update_stockquote(stock_code, df_stock, df_today)
-
+        
     celue1_fast = 策略1(df_stock, mode='fast', start_date=start_date, end_date=end_date)
     celue1 = 策略1(df_stock, mode='', start_date=start_date, end_date=end_date)
     celue2 = 策略2(df_stock, HS300_信号, start_date=start_date, end_date=end_date)
     celue_sell = 卖策略(df_stock, celue2, start_date=start_date, end_date=end_date)
-
+    
     print(f'{stock_code} 停机坪策略结果:')
     print(f'celue1_fast={celue1_fast}')
-    print(f'celue1={celue1.iat[-1]}')
+    print(f'celue1={celue1.iat[-1]}') 
     print(f'celue2={celue2.iat[-1]}')
     print(f'celue_sell={celue_sell.iat[-1]}')
