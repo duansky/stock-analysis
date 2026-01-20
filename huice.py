@@ -13,8 +13,8 @@ from tqdm import tqdm
 from rich import print as rprint
 
 # 回测变量定义
-start_date = "2013-01-01"  # 回测起始日期
-end_date = "2022-12-31"  # 回测结束日期
+start_date = "2025-01-01"  # 回测起始日期
+end_date = "2025-12-31"  # 回测结束日期
 stock_money = 10000000  # 股票账户初始资金
 xiadan_percent = 0.1  # 设定买入总资产百分比的股票份额
 xiadan_target_value = 100000  # 设定具体股票买入持有总金额
@@ -75,7 +75,7 @@ def handle_bar(context, bar_dict):
                 # 获取下一个交易日日期，并赋值。新DF行附加到context.df_celue
                 row_new['date'] = get_next_trading_date(context.now.strftime('%Y-%m-%d'), 1)
                 row_new = pd.DataFrame(row_new).T.set_index('date', drop=False)
-                context.df_celue = context.df_celue.append(row_new)
+                context.df_celue = pd.concat([context.df_celue, row_new], ignore_index=False)
                 continue
 
             # 获取当前投资组合中具体股票的数据
@@ -93,7 +93,7 @@ def handle_bar(context, bar_dict):
 
                     buy_price = context.df_celue.loc[(context.df_celue['code'] == row['code'])
                                                      & (context.df_celue['celue_buy'] == True)
-                                                     & (context.df_celue['date'] < context.now.strftime('%Y-%m-%d'))
+                                                     & (context.df_celue['date'] < pd.to_datetime(context.now.strftime('%Y-%m-%d')))
                                                      ].iloc[-1].close
                     sell_price = context.df_today.loc[(context.df_today['code'] == row['code'])].iloc[-1].close
                     series = pd.Series(data={"trading_datetime": context.now,
@@ -102,7 +102,7 @@ def handle_bar(context, bar_dict):
                                              "盈亏金额": cur_pnl,
                                              "盈亏率": round(sell_price/buy_price-1, 4),
                                              })
-                    context.stock_pnl = context.stock_pnl.append(series, ignore_index=True)
+                    context.stock_pnl = pd.concat([context.stock_pnl, pd.DataFrame([series])], ignore_index=True)
                 else:
                     # 委托单未成交
                     logger.info(f"{row['code']} {get_next_trading_date(context.now.strftime('%Y-%m-%d'))} 补单")
@@ -110,7 +110,7 @@ def handle_bar(context, bar_dict):
                     # 获取下一个交易日日期，并赋值。新DF行附加到context.df_celue
                     row_new['date'] = get_next_trading_date(context.now.strftime('%Y-%m-%d'), 1)
                     row_new = pd.DataFrame(row_new).T.set_index('date', drop=False)
-                    context.df_celue = context.df_celue.append(row_new)
+                    context.df_celue = pd.concat([context.df_celue, row_new], ignore_index=False)
                     # 根据日期删除有隐患，可能删除当日所有记录。不删程序也不影响
                     # context.df_celue.drop(
                     #     context.df_celue.loc[(context.df_celue['date'] == row['date'])
@@ -151,7 +151,7 @@ def handle_bar(context, bar_dict):
                     # 获取下一个交易日日期，并赋值。新DF行附加到context.df_celue
                     row_new['date'] = get_next_trading_date(context.now.strftime('%Y-%m-%d'), 1)
                     row_new = pd.DataFrame(row_new).T.set_index('date', drop=False)
-                    context.df_celue = context.df_celue.append(row_new)
+                    context.df_celue = pd.concat([context.df_celue, row_new], ignore_index=False)
                 # 订单成功完成
                 else:
                     pass
@@ -179,7 +179,7 @@ __config__ = {
         "start_date": start_date,
         "end_date": end_date,
         # 数据源所存储的文件路径
-        "data_bundle_path": "C:/Users/king/.rqalpha/bundle/",
+        "data_bundle_path": "D:/rqbundle_202601/",
         "strategy_file": "huice.py",
         # 目前支持 `1d` (日线回测) 和 `1m` (分钟线回测)，如果要进行分钟线，请注意是否拥有对应的数据源，目前开源版本是不提供对应的数据源的。
         "frequency": "1d",
@@ -243,7 +243,7 @@ df_trades = result_dict['trades']
 df_temp = pd.read_csv('temp.csv', index_col=0, encoding='gbk').set_index('trading_datetime', drop=False)  # 个股卖出盈亏金额DF
 df_temp.index.name = 'datetime'  # 重置index的name
 df_temp = pd.merge(df_trades, df_temp, how='right')  # merge，以df_temp为准。相当于更新df_temp
-df_trades = pd.merge(df_trades, df_temp, how='left')  # merge，以df_trades为准。相当于更新df_trades
+df_trades = pd.merge(df_trades, df_temp, left_index=True, right_index=True, how='left')  # merge，以df_trades为准。相当于更新df_trades
 result_dict['trades'] = df_trades
 with open(rq_result_filename+".pkl", 'wb') as fobj:
     pickle.dump(result_dict, fobj)
