@@ -88,24 +88,32 @@ def 策略1(df, start_date='', end_date='', mode=None):
     return result
 
 
-def 策略2(df, HS300_信号, start_date='', end_date=''):
+def 策略2(df, HS300_信号, start_date='', end_date='', target_date=''):
     """
     停机坪策略2：核心选股逻辑
     1. 最近15日有涨幅大于9.5%，且必须是放量上涨
     2. 紧接的下个交易日必须高开，收盘价必须上涨，且与开盘价不能大于等于相差3%
     3. 接下2、3个交易日必须高开，收盘价必须上涨，且与开盘价不能大于等于相差3%，且每天涨跌幅在5%间
-    
+
     :param DataFrame df:输入具体一个股票的DataFrame数据表。时间列为索引。
     :param HS300_信号: HS300信号序列
     :param date start_date:可选。留空从头开始。2020-10-10格式，策略指定从某日期开始
     :param date end_date:可选。留空到末尾。2020-10-10格式，策略指定到某日期结束
-    :return bool: 截止日期这天，策略是否触发。true触发，false不触发
+    :param date target_date:可选。指定作为停机坪信号的目标日期。留空则使用end_date作为目标日期
+    :return bool: 在目标日期这天，策略是否触发。true触发，false不触发
     """
 
     if start_date == '':
         start_date = df.index[0]  # 设置为df第一个日期
     if end_date == '':
         end_date = df.index[-1]  # 设置为df最后一个日期
+    
+    # 如果指定了target_date，则以target_date为准；否则使用end_date
+    if target_date == '':
+        target_date = end_date
+    else:
+        target_date = pd.to_datetime(target_date)
+    
     df = df.loc[start_date:end_date]
 
     if df.shape[0] < 251:  # 小于250日 直接返回false序列
@@ -201,17 +209,40 @@ def 策略2(df, HS300_信号, start_date='', end_date=''):
     停机坪信号_计数 = COUNT(停机坪信号, 10)
     最终信号 = 停机坪信号 & (REF(停机坪信号_计数, 1) == 0)
 
-    return 最终信号
+    # 如果指定了target_date，只返回该日期的信号
+    if target_date in 最终信号.index:
+        return 最终信号.loc[target_date]
+    else:
+        # 如果target_date不在数据范围内，返回False
+        return False
 
-def 卖策略(df, 策略2, start_date='', end_date=''):
+def 卖策略(df, 策略2, start_date='', end_date='', target_date=''):
     """
     停机坪卖出策略
+
     :param df: 个股Dataframe
-    :param 策略2: 买入策略2
+    :param 策略2: 买入策略2的结果（布尔值或序列）
     :param start_date:
     :param end_date:
+    :param target_date: 目标日期，如果策略2是单个布尔值，需要指定对应的日期
     :return: 卖出策略序列
     """
+
+    # 如果策略2是单个布尔值，需要转换为序列
+    if isinstance(策略2, bool):
+        if target_date == '':
+            target_date = df.index[-1]
+        else:
+            target_date = pd.to_datetime(target_date)
+        
+        if not 策略2:  # 如果策略2为False，直接返回
+            return pd.Series([False] * len(df), index=df.index, dtype=bool)
+        
+        # 创建策略2序列，只在target_date为True
+        策略2_series = pd.Series([False] * len(df), index=df.index, dtype=bool)
+        if target_date in df.index:
+            策略2_series.loc[target_date] = True
+        策略2 = 策略2_series
 
     if True not in 策略2.to_list():  # 买入策略2 没有买入点
         return pd.Series(index=策略2.index, dtype=bool)
@@ -289,6 +320,8 @@ if __name__ == '__main__':
     stock_code = '000887'
     start_date = ''
     end_date = ''
+    target_date = '2024-01-15'  # 示例：指定2024年1月15日为停机坪信号的目标日期
+    
     df_stock = pd.read_csv(ucfg.tdx['csv_lday'] + os.sep + stock_code + '.csv',
                            index_col=None, encoding='gbk', dtype={'code': str})
     df_stock['date'] = pd.to_datetime(df_stock['date'], format='%Y-%m-%d')  # 转为时间格式
@@ -303,8 +336,12 @@ if __name__ == '__main__':
         df_hs300 = func.update_stockquote('000300', df_hs300, df_today)
     HS300_信号 = 策略HS300(df_hs300)
 
-    if not HS300_信号.iat[-1]:
-        print('今日HS300不满足买入条件，停止选股')
+    if target_date and pd.to_datetime(target_date) in HS300_信号.index:
+        if not HS300_信号.loc[pd.to_datetime(target_date)]:
+            print(f'目标日期{target_date}HS300不满足买入条件')
+    else:
+        if not HS300_信号.iat[-1]:
+            print('今日HS300不满足买入条件，停止选股')
 
     if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00':
         df_today = func.get_tdx_lastestquote(stock_code)
@@ -312,11 +349,11 @@ if __name__ == '__main__':
         
     celue1_fast = 策略1(df_stock, mode='fast', start_date=start_date, end_date=end_date)
     celue1 = 策略1(df_stock, mode='', start_date=start_date, end_date=end_date)
-    celue2 = 策略2(df_stock, HS300_信号, start_date=start_date, end_date=end_date)
-    celue_sell = 卖策略(df_stock, celue2, start_date=start_date, end_date=end_date)
+    celue2 = 策略2(df_stock, HS300_信号, start_date=start_date, end_date=end_date, target_date=target_date)
+    celue_sell = 卖策略(df_stock, celue2, start_date=start_date, end_date=end_date, target_date=target_date)
     
-    print(f'{stock_code} 停机坪策略结果:')
+    print(f'{stock_code} 停机坪策略结果 target_date={target_date}:')
     print(f'celue1_fast={celue1_fast}')
-    print(f'celue1={celue1.iat[-1]}') 
-    print(f'celue2={celue2.iat[-1]}')
-    print(f'celue_sell={celue_sell.iat[-1]}')
+    print(f'celue1={celue1.iat[-1] if hasattr(celue1, "iat") else celue1}') 
+    print(f'celue2={celue2}')
+    print(f'celue_sell={celue_sell.iat[-1] if hasattr(celue_sell, "iat") else "N/A"}')

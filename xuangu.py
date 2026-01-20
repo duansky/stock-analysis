@@ -17,6 +17,7 @@ import user_config as ucfg
 
 start_date = ''
 end_date = ''
+target_date = '2026-01-08'  # 指定作为连涨第8天的目标日期，格式：'YYYY-MM-DD'。留空则使用当前日期
 
 # 变量定义
 tdxpath = ucfg.tdx['tdx_path']
@@ -89,7 +90,7 @@ def run_celue1(stocklist, df_today, tqdm_position=None):
     return stocklist
 
 
-def run_celue2(stocklist, HS300_信号, df_gbbq, df_today, tqdm_position=None):
+def run_celue2(stocklist, HS300_信号, df_gbbq, df_today, target_date='', tqdm_position=None):
     if 'single' in sys.argv[1:]:
         tq = tqdm(stocklist[:])
     else:
@@ -100,7 +101,9 @@ def run_celue2(stocklist, HS300_信号, df_gbbq, df_today, tqdm_position=None):
         df_stock = pd.read_pickle(pklfile)
         df_stock['date'] = pd.to_datetime(df_stock['date'], format='%Y-%m-%d')  # 转为时间格式
         df_stock.set_index('date', drop=False, inplace=True)  # 时间为索引。方便与另外复权的DF表对齐合并
-        if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00' \
+        
+        # 如果指定了target_date且不是交易时间，不需要更新实时行情
+        if target_date == '' and '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00' \
                 and 0 <= time.localtime(time.time()).tm_wday <= 4:
             df_today_code = df_today.loc[df_today['code'] == stockcode]
             df_stock = func.update_stockquote(stockcode, df_stock, df_today_code)
@@ -109,8 +112,16 @@ def run_celue2(stocklist, HS300_信号, df_gbbq, df_today, tqdm_position=None):
             if now_date in df_gbbq.loc[df_gbbq['code'] == stockcode]['权息日'].to_list():
                 cw_dict = func.readall_local_cwfile()
                 df_stock = func.make_fq(stockcode, df_stock, df_gbbq, cw_dict)
-        celue2 = CeLue.策略2(df_stock, HS300_信号, start_date=start_date, end_date=end_date).iat[-1]
-        if not celue2:
+        
+        celue2 = CeLue.策略2(df_stock, HS300_信号, start_date=start_date, end_date=end_date, target_date=target_date)
+        
+        # 处理返回值：如果是布尔值，直接判断；如果是序列，取最后一个值
+        if isinstance(celue2, bool):
+            celue2_result = celue2
+        else:
+            celue2_result = celue2.iat[-1] if hasattr(celue2, 'iat') else celue2
+            
+        if not celue2_result:
             stocklist.remove(stockcode)
     return stocklist
 
@@ -132,26 +143,47 @@ if __name__ == '__main__':
     df_gbbq = pd.read_csv(ucfg.tdx['csv_gbbq'] + '/gbbq.csv', encoding='gbk', dtype={'code': str})
 
     # 策略部分
-    # 先判断今天是否买入
-    print('今日HS300行情判断')
+    # 先判断目标日期或今天是否买入
+    if target_date:
+        print(f'目标日期 {target_date} HS300行情判断')
+    else:
+        print('今日HS300行情判断')
+    
     df_hs300 = pd.read_csv(ucfg.tdx['csv_index'] + '/000300.csv', index_col=None, encoding='gbk', dtype={'code': str})
     df_hs300['date'] = pd.to_datetime(df_hs300['date'], format='%Y-%m-%d')  # 转为时间格式
     df_hs300.set_index('date', drop=False, inplace=True)  # 时间为索引。方便与另外复权的DF表对齐合并
-    if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00':
+    
+    # 只有在没有指定target_date且在交易时间内才获取实时行情
+    if target_date == '' and '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00':
         df_today = func.get_tdx_lastestquote((1, '000300'))
         df_hs300 = func.update_stockquote('000300', df_hs300, df_today)
         del df_today
+    
     HS300_信号 = CeLue.策略HS300(df_hs300)
-    if HS300_信号.iat[-1]:
-        print('[red]今日HS300满足买入条件，执行买入操作[/red]')
+    
+    # 检查目标日期或当日的HS300信号
+    if target_date:
+        target_date_pd = pd.to_datetime(target_date)
+        if target_date_pd in HS300_信号.index:
+            if HS300_信号.loc[target_date_pd]:
+                print(f'[red]目标日期{target_date}HS300满足买入条件，执行选股操作[/red]')
+            else:
+                print(f'[green]目标日期{target_date}HS300不满足买入条件，仍然选股，但标记为不买入[/green]')
+                HS300_信号.loc[:] = True  # 强制全部设置为True出选股结果
+        else:
+            print(f'[yellow]警告：目标日期{target_date}不在HS300数据范围内[/yellow]')
     else:
-        print('[green]今日HS300不满足买入条件，仍然选股，但不执行买入操作[/green]')
-        HS300_信号.loc[:] = True  # 强制全部设置为True出选股结果
+        if HS300_信号.iat[-1]:
+            print('[red]今日HS300满足买入条件，执行买入操作[/red]')
+        else:
+            print('[green]今日HS300不满足买入条件，仍然选股，但不执行买入操作[/green]')
+            HS300_信号.loc[:] = True  # 强制全部设置为True出选股结果
 
 
     # 周一到周五，9点到16点之间，获取在线行情。其他时间不是交易日，默认为离线数据已更新到最新
+    # 如果指定了target_date，则不需要获取实时行情
     df_today_tmppath = ucfg.tdx['csv_gbbq'] + '/df_today.pkl'
-    if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00' \
+    if target_date == '' and '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00' \
             and 0 <= time.localtime(time.time()).tm_wday <= 4:
         # 获取当前最新行情，临时保存到本地，防止多次调用被服务器封IP。
         print(f'现在是交易时段，需要获取股票实时行情')
@@ -166,6 +198,8 @@ if __name__ == '__main__':
             df_today = func.get_tdx_lastestquote(stocklist)
             df_today.to_pickle(df_today_tmppath, compression=None)
     else:
+        if target_date:
+            print(f'使用历史数据进行回测，目标日期：{target_date}')
         try:
             os.remove(df_today_tmppath)
         except FileNotFoundError:
@@ -209,13 +243,13 @@ if __name__ == '__main__':
     # print(stocklist)
 
     print(f'开始执行策略2')
-    # 如果没有df_today
-    if '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00' and 'df_today' not in dir():
+    # 如果没有df_today且没有指定target_date
+    if target_date == '' and '09:00:00' < time.strftime("%H:%M:%S", time.localtime()) < '16:00:00' and 'df_today' not in dir():
         df_today = func.get_tdx_lastestquote(stocklist)  # 获取当前最新行情
 
     starttime_tick = time.time()
     if 'single' in sys.argv[1:]:
-        stocklist = run_celue2(stocklist, HS300_信号, df_gbbq, df_today)
+        stocklist = run_celue2(stocklist, HS300_信号, df_gbbq, df_today, target_date)
     else:
         # 由于df_dict字典占用超多内存资源，导致多进程效率还不如单进程
         t_num = os.cpu_count() - 2  # 进程数 读取CPU逻辑处理器个数
@@ -228,10 +262,10 @@ if __name__ == '__main__':
             mod = len(stocklist) % t_num
             if i + 1 != t_num:
                 # print(i, i * div, (i + 1) * div)
-                pool_result.append(p.apply_async(run_celue2, args=(stocklist[i * div:(i + 1) * div], HS300_信号, df_gbbq, df_today, i,)))
+                pool_result.append(p.apply_async(run_celue2, args=(stocklist[i * div:(i + 1) * div], HS300_信号, df_gbbq, df_today, target_date, i,)))
             else:
                 # print(i, i * div, (i + 1) * div + mod)
-                pool_result.append(p.apply_async(run_celue2, args=(stocklist[i * div:(i + 1) * div + mod], HS300_信号, df_gbbq, df_today, i,)))
+                pool_result.append(p.apply_async(run_celue2, args=(stocklist[i * div:(i + 1) * div + mod], HS300_信号, df_gbbq, df_today, target_date, i,)))
 
         # print('Waiting for all subprocesses done...')
         p.close()
@@ -245,5 +279,8 @@ if __name__ == '__main__':
     print(f'策略2执行完毕，已选出 {len(stocklist):>d} 只股票 用时 {(time.time() - starttime_tick):>.2f} 秒')
 
     # 结果
-    print(f'全部完成 共用时 {(time.time() - starttime):>.2f} 秒 已选出 {len(stocklist)} 只股票:')
+    if target_date:
+        print(f'全部完成 共用时 {(time.time() - starttime):>.2f} 秒 在目标日期 {target_date} 已选出 {len(stocklist)} 只连涨8天的股票:')
+    else:
+        print(f'全部完成 共用时 {(time.time() - starttime):>.2f} 秒 已选出 {len(stocklist)} 只股票:')
     print(stocklist)
